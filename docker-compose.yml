@@ -1,0 +1,102 @@
+networks:
+  sec_net:
+    driver: bridge
+
+volumes:
+  misp_db_data:
+  misp_data:
+  misp_redis_data:
+  ollama_data:
+  wazuh_manager_data:
+
+
+services:
+  ollama:
+    image: ollama/ollama:latest
+    container_name: local_ollama
+    ports:
+      - "11434:11434"
+    volumes:
+      - "ollama_data:/root/.ollama"
+    deploy:
+      resources:
+          reservations:
+            devices:
+              - driver: nvidia
+                count: all
+                capabilities: ["gpu"]  
+    restart: unless-stopped
+    networks:
+      - sec_net 
+
+  misp-db:
+    image: mariadb:10.11
+    container_name: misp_db
+    environment:
+      MYSQL_ROOT_PASSWORD: ${MYSQL_ROOT_PASSWORD}
+      MYSQL_DATABASE: ${MYSQL_DATABASE}
+      MYSQL_USER: ${MYSQL_USER}
+      MYSQL_PASSWORD: ${MYSQL_PASSWORD}
+    volumes:
+      - misp_db_data:/var/lib/mysql
+    networks:
+      - sec_net
+    restart: unless-stopped
+
+  misp-redis:
+    image: redis:alpine
+    container_name: misp_redis
+    volumes:
+      - misp_redis_data:/data
+    networks: 
+      - sec_net 
+
+  misp-core:
+    image: ghcr.io/misp/misp-docker/misp-core:latest
+    container_name: local_misp
+    depends_on:
+      - misp-db
+      - misp-redis
+    ports:
+      - "80:80"
+      - "443:443"    
+    environment:
+      - BASE_URL=https://localhost
+      - MYSQL_HOST=misp-db
+      - MYSQL_DATABASE=${MYSQL_DATABASE}
+      - MYSQL_USER=${MYSQL_USER}
+      - MYSQL_PASSWORD=${MYSQL_PASSWORD}
+      - REDIS_HOST=misp-redis
+    volumes:
+      - misp_data:/var/www/misp
+    networks:
+      - sec_net
+    restart: unless-stopped
+  
+  misp-nginx:
+    image: ghcr.io/misp/misp-docker/misp-nginx:latest
+    container_name: local_misp_nginx
+    depends_on:
+      - misp-core
+    ports:
+      - "80:8080"
+      - "443:8443"
+    networks:
+      - sec_net
+    restart: unless-stopped
+  
+
+  wazuh.manager:
+    image: wazuh/wazuh-manager:4.7.2
+    container_name: local_wazuh
+    hostname: wazuh-manager
+    ports:
+      - "1514:1514"
+      - "1515:1515"
+      - "55000:55000"
+    volumes:
+      - wazuh_manager_data:/var/ossec/data  
+    networks:
+      - sec_net
+    restart: unless-stopped
+    
